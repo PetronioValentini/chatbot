@@ -2,13 +2,12 @@ import streamlit as st
 
 from langchain.memory import ConversationBufferMemory
 from langchain_openai import ChatOpenAI
-from langchain_groq import ChatGroq 
+from langchain_groq import ChatGroq
+from langchain.prompts import ChatPromptTemplate
 
 from utils.utils import page_config
 from utils.document_loader import file_web, file_pdf, file_csv, file_txt, file_youtube
-
-
-
+from utils.prompt import load_system_prompt
 
 
 MEMORY = ConversationBufferMemory()
@@ -17,23 +16,28 @@ MEMORY.chat_memory.add_ai_message("Hi you. My name is **Insonia**, how can I hel
 FILE_TYPES_ACCEPTED = {
     'Site': {
         'label' : 'Web Page',
-        'function' : file_web
+        'function' : file_web,
+        'input' : lambda tab: tab.text_input("Enter the URL of the site", placeholder="https://example.com")
     },
     'PDF': {
         'label' : 'PDF Document',
-        'function' : file_pdf
+        'function' : file_pdf,
+        'input' : lambda tab: tab.file_uploader("Upload a PDF file", type='pdf')
     },
     'CSV': {
         'label' : 'CSV Document',
-        'function' : file_csv
+        'function' : file_csv,
+        'input' : lambda tab: tab.file_uploader("Upload a CSV file", type='csv')
     },
     'TXT': {
         'label' : 'Text Document',
-        'function' : file_txt
+        'function' : file_txt,
+        'input' : lambda tab: tab.file_uploader("Upload a TXT file", type='txt')
     },
     'Youtube': {
         'label' : 'Youtube Video',
-        'function' : file_youtube
+        'function' : file_youtube,
+        'input' : lambda tab: tab.text_input("Enter the URL of the Youtube video", placeholder="https://youtube.com/watch?v=example")
     },
 }
 
@@ -49,14 +53,28 @@ LLM_PROVIDERS_TYPES = {
 }
 
 
-def load_llm(provider, model, api_key, file):
+def load_llm(provider, model, api_key, file_type_choosed, data):
     llm_config_load = LLM_PROVIDERS_TYPES[provider]['llm_model'](model=model, api_key=api_key)
-    st.session_state['llm_config'] = llm_config_load
+
+    system_message = load_system_prompt(file_type_choosed, data)
+
+    template = ChatPromptTemplate.from_messages([
+        ("system", system_message),
+        ("placeholder", "{chat_history}"),
+        ("user", "{input}"),
+    ])
+
+    chain = template | llm_config_load
+
+    st.session_state['chain'] = chain
     
 
 def chat():
     
-    ia = st.session_state.get('llm_config')
+    ia = st.session_state.get('chain', None)
+    if ia is None:
+        st.error("Please load a model in the sidebar")
+        st.stop()
     
     memory = st.session_state.get("memory", MEMORY) # Initialize messages
     
@@ -72,49 +90,46 @@ def chat():
         chat.markdown(input_user)
         
         chat = st.chat_message('ai')
-        answer = chat.write_stream(ia.stream(input_user))
+        answer = chat.write_stream(ia.stream({'input': input_user, 'chat_history': memory.buffer_as_messages}))
         
         memory.chat_memory.add_ai_message(answer)
         
         st.session_state["memory"] = memory
 
 
-def file_uploaded_settings(file_type, tab1):
+def file_type_settings(file_type, tab1):
     
-    data = None
-    
-    if file_type == 'Site':
-        url = tab1.text_input("Enter the URL of the site", placeholder="https://example.com")
-        if url:
-            data = file_web(url)
-    elif file_type == 'PDF':
-        file = tab1.file_uploader("Upload a PDF file", type='pdf')
-        if file:
-            data = file_pdf(file)
-    elif file_type == 'CSV':
-        file = tab1.file_uploader("Upload a CSV file", type='csv')
-        if file:
-            data = file_csv(file)
-    elif file_type == 'TXT':
-        file = tab1.file_uploader("Upload a TXT file", type='txt')
-        if file:
-            data = file_txt(file)
-    elif file_type == 'Youtube':
-        url = tab1.text_input("Enter the URL of the Youtube video", placeholder="https://youtube.com/watch?v=example")
-        if url:
-            data = file_youtube(url)
+    if file_type in FILE_TYPES_ACCEPTED:
+        input_data = FILE_TYPES_ACCEPTED[file_type]['input'](tab1)
+        return input_data
     else:
-        st.warning("Please select a file type")
-    return data
+        st.warning("Please select a valid file type")
+        return None
 
-
+def upload_file(file_type_choosed, input_data):
+    if input_data:
+        data = FILE_TYPES_ACCEPTED[file_type_choosed]['function'](input_data)
+        try:
+            return data
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo: {str(e)}")
+            return None
+    else:
+        st.info("Nenhum dado fornecido.")
+        return None
 
 def side_bar():
     tab1, tab2 = st.sidebar.tabs(['File Upload', 'Model Settings'])
     
-    file_type_choosed = tab1.selectbox("Select a type of file", FILE_TYPES_ACCEPTED)
-    file = file_uploaded_settings(file_type_choosed, tab1)
-    print(file)
+    file_type_choosed = tab1.selectbox("Select a type of file", list(FILE_TYPES_ACCEPTED))
+    input_data = file_type_settings(file_type_choosed, tab1)
+
+
+    btn_load = tab1.button("Load File", use_container_width=True)
+    if btn_load:
+        data = upload_file(file_type_choosed, input_data)
+        print(data)
+
     
     provider_choosed = tab2.selectbox("Select a Provider", LLM_PROVIDERS_TYPES.keys())
     model_choosed = tab2.selectbox("Select a Model", LLM_PROVIDERS_TYPES[provider_choosed]['models'])
@@ -124,14 +139,14 @@ def side_bar():
     st.session_state[f'api_key_{provider_choosed}'] = api_key
     
     if tab2.button("Load LLM", use_container_width=True):
-        load_llm(provider_choosed, model_choosed, api_key, file)
+        load_llm(provider_choosed, model_choosed, api_key, file_type_choosed, data)
 
     
 
 def main():
-    page_config()   
+    page_config()
+    side_bar()   
     chat()
-    side_bar()
     
     
         
