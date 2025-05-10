@@ -5,7 +5,8 @@ from langchain.prompts import ChatPromptTemplate
 
 from utils.utils import page_config
 from utils.prompt import load_system_prompt
-from utils.utils import FILE_TYPES_ACCEPTED, LLM_PROVIDERS_TYPES
+from utils.file_types_accepted import FILE_TYPES_ACCEPTED
+from utils.llm_providers_types import LLM_PROVIDERS_TYPES
 
 
 
